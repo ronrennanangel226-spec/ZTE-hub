@@ -1,0 +1,499 @@
+local Players, RunService, Workspace, TweenService, UserInputService, SoundService = 
+    game:GetService("Players"), game:GetService("RunService"), game:GetService("Workspace"), 
+    game:GetService("TweenService"), game:GetService("UserInputService"), game:GetService("SoundService")
+local Player = Players.LocalPlayer
+
+local AutoBoss, AutoPunch, AutoChest = false, false, false
+local AttackDistance, DodgeDistance, FloatHeight = 3, 180, 15
+local Dodging, Connections, LastSequence, ToggleSetters = false, {}, {}, {}
+local BossRenderConn
+
+if game:GetService("CoreGui"):FindFirstChild("ZTEHUD") then
+    game:GetService("CoreGui").ZTEHUD:Destroy()
+end
+
+local alertSound = Instance.new("Sound", SoundService)
+alertSound.Name = "BossSpawnAlertSound"
+alertSound.SoundId = "rbxassetid://9114223178"
+alertSound.Volume = 2.5
+
+-- ============================================
+-- ZTE CUSTOM UI SETUP
+-- ============================================
+local HUD = Instance.new("ScreenGui", game:GetService("CoreGui"))
+HUD.Name = "ZTEHUD"
+HUD.ResetOnSpawn = false
+
+-- Open Button (when minimized)
+local OpenBtn = Instance.new("TextButton", HUD)
+OpenBtn.Size, OpenBtn.Position, OpenBtn.Visible = UDim2.new(0, 50, 0, 50), UDim2.new(0.02, 0, 0.4, 0), false
+OpenBtn.BackgroundColor3, OpenBtn.Text, OpenBtn.TextSize, OpenBtn.Font = Color3.fromRGB(10, 14, 23), "⚡", 24, Enum.Font.GothamBold
+OpenBtn.TextColor3 = Color3.fromRGB(0, 255, 200)
+Instance.new("UICorner", OpenBtn).CornerRadius = UDim.new(0, 12)
+local obs = Instance.new("UIStroke", OpenBtn)
+obs.Thickness, obs.Color = 2, Color3.fromRGB(0, 255, 200)
+
+-- Main Frame
+local MainFrame = Instance.new("Frame", HUD)
+MainFrame.Size, MainFrame.Position = UDim2.new(0, 340, 0, 450), UDim2.new(0.05, 0, 0.15, 0)
+MainFrame.BackgroundColor3, MainFrame.BackgroundTransparency, MainFrame.ClipsDescendants = Color3.fromRGB(8, 10, 18), 0.1, true
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+local mfs = Instance.new("UIStroke", MainFrame)
+mfs.Thickness, mfs.Color, mfs.ApplyStrokeMode = 2, Color3.fromRGB(0, 255, 200), Enum.ApplyStrokeMode.Border
+
+-- Title Bar
+local TitleBar = Instance.new("Frame", MainFrame)
+TitleBar.Size, TitleBar.BackgroundColor3, TitleBar.BackgroundTransparency = UDim2.new(1, 0, 0, 40), Color3.fromRGB(15, 20, 30), 0.1
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
+
+-- Title Text
+local TitleText = Instance.new("TextLabel", TitleBar)
+TitleText.Size, TitleText.Position, TitleText.BackgroundTransparency = UDim2.new(1, -80, 1, 0), UDim2.new(0, 12, 0, 0), 1
+TitleText.Font, TitleText.Text, TitleText.TextSize, TitleText.TextColor3 = Enum.Font.GothamBold, "⚡ ZTE - AUTO BOSS", 14, Color3.fromRGB(0, 255, 200)
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Credit Label
+local CreditLabel = Instance.new("TextLabel", TitleBar)
+CreditLabel.Size, CreditLabel.Position, CreditLabel.BackgroundTransparency = UDim2.new(1, -20, 0, 12), UDim2.new(0, 10, 0, 22), 1
+CreditLabel.Font, CreditLabel.Text, CreditLabel.TextSize, CreditLabel.TextColor3 = Enum.Font.Gotham, "by Awesomeboybacom2000 & krys_1238", 8, Color3.fromRGB(150, 150, 150)
+CreditLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Minimize Button
+local MinimizeBtn = Instance.new("TextButton", TitleBar)
+MinimizeBtn.Size, MinimizeBtn.Position, MinimizeBtn.AnchorPoint = UDim2.new(0, 28, 0, 28), UDim2.new(1, -8, 0.5, 0), Vector2.new(1, 0.5)
+MinimizeBtn.BackgroundColor3, MinimizeBtn.Font, MinimizeBtn.Text, MinimizeBtn.TextSize = Color3.fromRGB(0, 40, 40), Enum.Font.GothamBold, "─", 14
+MinimizeBtn.TextColor3 = Color3.fromRGB(0, 255, 200)
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 8)
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton", TitleBar)
+CloseBtn.Size, CloseBtn.Position, CloseBtn.AnchorPoint = UDim2.new(0, 28, 0, 28), UDim2.new(1, -42, 0.5, 0), Vector2.new(1, 0.5)
+CloseBtn.BackgroundColor3, CloseBtn.Font, CloseBtn.Text, CloseBtn.TextSize = Color3.fromRGB(40, 0, 0), Enum.Font.GothamBold, "X", 12
+CloseBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+local function ToggleUI(minimize)
+    if minimize then
+        TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 340, 0, 0)}):Play()
+        task.wait(0.2)
+        MainFrame.Visible, OpenBtn.Visible = false, true
+    else
+        MainFrame.Visible, OpenBtn.Visible = true, false
+        TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 340, 0, 450)}):Play()
+    end
+end
+MinimizeBtn.MouseButton1Click:Connect(function() ToggleUI(true) end)
+OpenBtn.MouseButton1Click:Connect(function() ToggleUI(false) end)
+CloseBtn.MouseButton1Click:Connect(function() HUD:Destroy() end)
+
+-- Drag Functionality
+local function EnableDragging(Frame, DragArea)
+    local Dragging, DragInput, DragStart, StartPos
+    DragArea.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            Dragging, DragStart, StartPos = true, input.Position, Frame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then Dragging = false end end)
+        end
+    end)
+    DragArea.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then DragInput = input end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == DragInput and Dragging then
+            local delta = input.Position - DragStart
+            TweenService:Create(Frame, TweenInfo.new(0.08), {Position = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + delta.X, StartPos.Y.Scale, StartPos.Y.Offset + delta.Y)}):Play()
+        end
+    end)
+end
+EnableDragging(MainFrame, TitleBar)
+EnableDragging(OpenBtn, OpenBtn)
+
+-- Content List
+local ContentList = Instance.new("Frame", MainFrame)
+ContentList.Size, ContentList.Position, ContentList.BackgroundTransparency = UDim2.new(1, -24, 1, -55), UDim2.new(0, 12, 0, 50), 1
+local UIListLayout = Instance.new("UIListLayout", ContentList)
+UIListLayout.SortOrder, UIListLayout.Padding = Enum.SortOrder.LayoutOrder, UDim.new(0, 8)
+
+-- ============================================
+-- ZTE UI ELEMENTS
+-- ============================================
+
+-- Create Toggle Function
+local function CreateToggle(name, key, defaultState, callback)
+    local state = defaultState
+    local Frame = Instance.new("Frame", ContentList)
+    Frame.Size, Frame.BackgroundColor3 = UDim2.new(1, 0, 0, 38), Color3.fromRGB(15, 25, 35)
+    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 8)
+    local s = Instance.new("UIStroke", Frame)
+    s.Thickness, s.Color = 1, Color3.fromRGB(0, 100, 100)
+
+    local Label = Instance.new("TextLabel", Frame)
+    Label.Size, Label.Position, Label.BackgroundTransparency = UDim2.new(1, -65, 1, 0), UDim2.new(0, 10, 0, 0), 1
+    Label.Font, Label.Text, Label.TextColor3, Label.TextSize = Enum.Font.GothamMedium, name, Color3.fromRGB(200, 255, 240), 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local SwitchBG = Instance.new("Frame", Frame)
+    SwitchBG.Size, SwitchBG.Position, SwitchBG.AnchorPoint = UDim2.new(0, 42, 0, 20), UDim2.new(1, -8, 0.5, 0), Vector2.new(1, 0.5)
+    SwitchBG.BackgroundColor3 = state and Color3.fromRGB(0, 255, 200) or Color3.fromRGB(40, 50, 60)
+    Instance.new("UICorner", SwitchBG).CornerRadius = UDim.new(1, 0)
+
+    local Dot = Instance.new("Frame", SwitchBG)
+    Dot.Size, Dot.Position, Dot.AnchorPoint = UDim2.new(0, 16, 0, 16), state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0), Vector2.new(0, 0.5)
+    Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Instance.new("UICorner", Dot).CornerRadius = UDim.new(1, 0)
+
+    local Button = Instance.new("TextButton", Frame)
+    Button.Size, Button.BackgroundTransparency, Button.Text = UDim2.new(1, 0, 1, 0), 1, ""
+
+    local function SetState(newState)
+        state = newState
+        callback(state)
+        TweenService:Create(Dot, TweenInfo.new(0.2), {Position = state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)}):Play()
+        TweenService:Create(SwitchBG, TweenInfo.new(0.2), {BackgroundColor3 = state and Color3.fromRGB(0, 255, 200) or Color3.fromRGB(40, 50, 60)}):Play()
+    end
+    ToggleSetters[key] = SetState
+    Button.MouseButton1Click:Connect(function() SetState(not state) end)
+end
+
+-- Create Slider Function
+local function CreateSlider(name, min, max, default, callback)
+    local val = default
+    local Frame = Instance.new("Frame", ContentList)
+    Frame.Size, Frame.BackgroundColor3 = UDim2.new(1, 0, 0, 48), Color3.fromRGB(15, 25, 35)
+    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 8)
+
+    local Label = Instance.new("TextLabel", Frame)
+    Label.Size, Label.Position, Label.BackgroundTransparency = UDim2.new(1, -20, 0, 16), UDim2.new(0, 10, 0, 4), 1
+    Label.Font, Label.Text, Label.TextColor3, Label.TextSize = Enum.Font.GothamMedium, name .. ": " .. tostring(val), Color3.fromRGB(200, 255, 240), 10
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local SliderBar = Instance.new("Frame", Frame)
+    SliderBar.Size, SliderBar.Position, SliderBar.BackgroundColor3 = UDim2.new(1, -20, 0, 6), UDim2.new(0, 10, 0, 28), Color3.fromRGB(30, 40, 50)
+    Instance.new("UICorner", SliderBar).CornerRadius = UDim.new(1, 0)
+
+    local FillBar = Instance.new("Frame", SliderBar)
+    FillBar.Size, FillBar.BackgroundColor3 = UDim2.new((val - min)/(max - min), 0, 1, 0), Color3.fromRGB(0, 255, 200)
+    Instance.new("UICorner", FillBar).CornerRadius = UDim.new(1, 0)
+
+    local SliderBtn = Instance.new("TextButton", Frame)
+    SliderBtn.Size, SliderBtn.BackgroundTransparency, SliderBtn.Text = UDim2.new(1, 0, 1, 0), 1, ""
+
+    local Sliding = false
+    local function UpdateSlider(input)
+        local posX = math.clamp(input.Position.X - SliderBar.AbsolutePosition.X, 0, SliderBar.AbsoluteSize.X)
+        local percentage = posX / SliderBar.AbsoluteSize.X
+        val = math.floor(min + (max - min) * percentage)
+        Label.Text = name .. ": " .. tostring(val)
+        FillBar.Size = UDim2.new(percentage, 0, 1, 0)
+        callback(val)
+    end
+    SliderBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then Sliding = true UpdateSlider(input) end
+    end)
+    SliderBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then Sliding = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if Sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then UpdateSlider(input) end
+    end)
+end
+
+-- Create Section Label
+local function CreateSection(text)
+    local Section = Instance.new("TextLabel", ContentList)
+    Section.Size, Section.BackgroundTransparency = UDim2.new(1, 0, 0, 20), 1
+    Section.Font, Section.Text, Section.TextSize, Section.TextColor3 = Enum.Font.GothamBold, text, 12, Color3.fromRGB(0, 255, 200)
+    Section.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+-- ============================================
+-- ZTE UI ELEMENTS
+-- ============================================
+
+CreateSection("⚡ ZTE CONTROLS")
+
+CreateToggle("AUTO BOSS COMBAT", "AutoBoss", AutoBoss, function(s) AutoBoss = s end)
+CreateToggle("AUTO PUNCH", "AutoPunch", AutoPunch, function(s) AutoPunch = s end)
+CreateToggle("AUTO CLAIM CHEST", "AutoChest", AutoChest, function(s) AutoChest = s end)
+
+CreateSection("⚡ ZTE SETTINGS")
+
+CreateSlider("MELEE DISTANCE", 1, 15, AttackDistance, function(v) AttackDistance = v end)
+CreateSlider("STOMP DODGE DISTANCE", 50, 300, DodgeDistance, function(v) DodgeDistance = v end)
+
+-- ============================================
+-- ZTE TIMER BOX
+-- ============================================
+local TimerBoxFrame = Instance.new("Frame", ContentList)
+TimerBoxFrame.Size, TimerBoxFrame.BackgroundColor3 = UDim2.new(1, 0, 0, 50), Color3.fromRGB(10, 20, 30)
+Instance.new("UICorner", TimerBoxFrame).CornerRadius = UDim.new(0, 8)
+local tbs = Instance.new("UIStroke", TimerBoxFrame)
+tbs.Thickness, tbs.Color = 1, Color3.fromRGB(0, 255, 200)
+
+local TimerTitleLabel = Instance.new("TextLabel", TimerBoxFrame)
+TimerTitleLabel.Size, TimerTitleLabel.Position, TimerTitleLabel.BackgroundTransparency = UDim2.new(1, 0, 0.35, 0), UDim2.new(0, 0, 0.1, 0), 1
+TimerTitleLabel.Text, TimerTitleLabel.TextColor3, TimerTitleLabel.TextSize, TimerTitleLabel.Font = "⏳ NEXT BOSS SPAWN (3H)", Color3.fromRGB(0, 255, 200), 10, Enum.Font.GothamBold
+
+local TimerLabel = Instance.new("TextLabel", TimerBoxFrame)
+TimerLabel.Size, TimerLabel.Position, TimerLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.45, 0), 1
+TimerLabel.Text, TimerLabel.TextColor3, TimerLabel.TextSize, TimerLabel.Font = "00:00:00", Color3.fromRGB(0, 255, 127), 16, Enum.Font.GothamBold
+
+-- ============================================
+-- ZTE HP MONITOR BOX
+-- ============================================
+local HPBoxFrame = Instance.new("Frame", ContentList)
+HPBoxFrame.Size, HPBoxFrame.BackgroundColor3 = UDim2.new(1, 0, 0, 50), Color3.fromRGB(10, 20, 30)
+Instance.new("UICorner", HPBoxFrame).CornerRadius = UDim.new(0, 8)
+local hpbs = Instance.new("UIStroke", HPBoxFrame)
+hpbs.Thickness, hpbs.Color = 1, Color3.fromRGB(0, 255, 200)
+
+local HPText = Instance.new("TextLabel", HPBoxFrame)
+HPText.Size, HPText.BackgroundTransparency = UDim2.new(1, 0, 1, 0), 1
+HPText.Text, HPText.TextColor3, HPText.TextSize, HPText.Font = "⚡ SEARCHING BOSS...", Color3.fromRGB(0, 255, 200), 11, Enum.Font.GothamBold
+HPText.TextWrapped, HPText.TextXAlignment, HPText.TextYAlignment = true, Enum.TextXAlignment.Center, Enum.TextYAlignment.Center
+-- ============================================
+-- ZTE CREDIT BOX
+-- ============================================
+local CreditBox = Instance.new("Frame", ContentList)
+CreditBox.Size, CreditBox.BackgroundColor3 = UDim2.new(1, 0, 0, 30), Color3.fromRGB(10, 20, 30)
+Instance.new("UICorner", CreditBox).CornerRadius = UDim.new(0, 8)
+local cbs = Instance.new("UIStroke", CreditBox)
+cbs.Thickness, cbs.Color = 1, Color3.fromRGB(0, 255, 200)
+
+local CreditText = Instance.new("TextLabel", CreditBox)
+CreditText.Size, CreditText.BackgroundTransparency = UDim2.new(1, 0, 1, 0), 1
+CreditText.Text, CreditText.TextColor3, CreditText.TextSize, CreditText.Font = "⚡ ZTE by Awesomeboybacom2000 & krys_1238", Color3.fromRGB(0, 255, 200), 9, Enum.Font.GothamBold
+CreditText.TextWrapped, CreditText.TextXAlignment, CreditText.TextYAlignment = true, Enum.TextXAlignment.Center, Enum.TextYAlignment.Center
+
+-- ============================================
+-- ZTE CORE LOGIC
+-- ============================================
+
+-- Auto-off logic
+local function SetAllToggles(targetState)
+    if AutoBoss ~= targetState then ToggleSetters["AutoBoss"](targetState) end
+    if AutoPunch ~= targetState then ToggleSetters["AutoPunch"](targetState) end
+    if targetState == true then
+        if AutoChest ~= true then ToggleSetters["AutoChest"](true) end
+    end
+end
+
+-- Timer logic
+local hasPlayedSound = false
+RunService.RenderStepped:Connect(function()
+    local secondsLeft = 10800 - (os.time() % 10800)
+    if secondsLeft == 10800 then secondsLeft = 0 end
+
+    local displayHours = math.floor(secondsLeft / 3600)
+    local displayMinutes = math.floor((secondsLeft % 3600) / 60)
+    local displaySeconds = secondsLeft % 60
+
+    if displayHours > 0 then
+        TimerLabel.Text = string.format("%02d:%02d:%02d", displayHours, displayMinutes, displaySeconds)
+    else
+        TimerLabel.Text = string.format("%02d:%02d", displayMinutes, displaySeconds)
+    end
+
+    if secondsLeft <= 10 and secondsLeft > 0 then SetAllToggles(true) end
+    if secondsLeft == 0 then
+        TimerLabel.TextColor3, TimerLabel.Text = Color3.fromRGB(255, 50, 50), "🚨 BOSS SPAWNING NOW!"
+        if not hasPlayedSound then alertSound:Play() hasPlayedSound = true end
+    else
+        TimerLabel.TextColor3, hasPlayedSound = Color3.fromRGB(0, 255, 127), false
+    end
+end)
+
+-- Format number function
+local function FormatNumber(Number)
+    if not Number then return "?" end
+    if Number >= 1e12 then return string.format("%.2fT", Number / 1e12)
+    elseif Number >= 1e9 then return string.format("%.2fB", Number / 1e9)
+    elseif Number >= 1e6 then return string.format("%.2fM", Number / 1e6)
+    elseif Number >= 1e3 then return string.format("%.2fK", Number / 1e3) end
+    return tostring(math.floor(Number))
+end
+
+-- Get arena function
+local function GetArena() return Workspace:FindFirstChild("Events") and Workspace.Events:FindFirstChild("BossArena") end
+
+-- Get health function
+local function GetHealth(Model)
+    local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+    if Humanoid then return Humanoid.Health, Humanoid.MaxHealth, Humanoid end
+    local CurrentHP, MaxHP
+    for Name, Value in pairs(Model:GetAttributes()) do
+        local N = tostring(Name):lower()
+        if typeof(Value) == "number" then
+            if N:find("hp") or N:find("health") then if N:find("max") then MaxHP = Value else CurrentHP = Value end end
+        end
+    end
+    for _, Object in ipairs(Model:GetDescendants()) do
+        if Object:IsA("NumberValue") or Object:IsA("IntValue") then
+            local N = Object.Name:lower()
+            if N:find("hp") or N:find("health") then if N:find("max") then MaxHP = Object.Value else CurrentHP = Object.Value end end
+        end
+    end
+    return CurrentHP, MaxHP, nil
+end
+
+-- Find boss function
+local function FindBoss()
+    local Arena = GetArena()
+    if not Arena then return nil end
+    local BestBoss, BestMaxHP = nil, 0
+    for _, Object in ipairs(Arena:GetDescendants()) do
+        if Object:IsA("Model") and Object ~= Arena then
+            local HP, MaxHP = GetHealth(Object)
+            if (MaxHP or HP or 0) > BestMaxHP then BestMaxHP = MaxHP or HP or 0 BestBoss = Object end
+        end
+    end
+    return BestBoss
+end
+
+-- HP monitor loop
+task.spawn(function()
+    while HUD.Parent do
+        local Arena = GetArena()
+        if not Arena then
+            HPText.Text, HPText.TextColor3 = "⚡ BOSS ARENA NOT FOUND", Color3.fromRGB(255, 80, 80)
+        else
+            local Boss = FindBoss()
+            if not Boss then
+                HPText.Text, HPText.TextColor3 = "⚡ SEARCHING BOSS...", Color3.fromRGB(0, 255, 200)
+            else
+                local HP, MaxHP = GetHealth(Boss)
+                if HP then
+                    if HP <= 0 then SetAllToggles(false) end
+                    if MaxHP then
+                        HPText.Text = "👑 " .. Boss.Name .. "\n❤️ " .. FormatNumber(HP) .. " / " .. FormatNumber(MaxHP)
+                        local Percent = HP / MaxHP
+                        HPText.TextColor3 = Percent <= 0.25 and Color3.fromRGB(255, 80, 80) or Percent <= 0.5 and Color3.fromRGB(255, 190, 70) or Color3.fromRGB(0, 255, 127)
+                    else
+                        HPText.Text, HPText.TextColor3 = "👑 " .. Boss.Name .. "\n❤️ " .. FormatNumber(HP), Color3.fromRGB(0, 255, 127)
+                    end
+                else
+                    HPText.Text, HPText.TextColor3 = "⚡ BOSS HP NOT FOUND", Color3.fromRGB(255, 80, 80)
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- Claim prompt function
+local function TryClaimPrompt(prompt)
+    if not AutoChest or not prompt:IsA("ProximityPrompt") then return end
+    local act, obj = string.lower(prompt.ActionText or ""), string.lower(prompt.ObjectText or "")
+    if act:find("claim") or obj:find("chest") then pcall(function() fireproximityprompt(prompt) end) end
+end
+
+Workspace.DescendantAdded:Connect(function(obj) if obj:IsA("ProximityPrompt") then task.wait(0.1) TryClaimPrompt(obj) end end)
+task.spawn(function()
+    while task.wait(0.5) do
+        if AutoChest then for _, obj in ipairs(Workspace:GetDescendants()) do TryClaimPrompt(obj) end end
+    end
+end)
+
+-- Auto punch loop
+task.spawn(function()
+    while task.wait(0.1) do
+        if AutoPunch then
+            local char = Player.Character
+            local hum, backpack = char and char:FindFirstChildOfClass("Humanoid"), Player:FindFirstChild("Backpack")
+            if char and hum and hum.Health > 0 then
+                local punch = char:FindFirstChild("Punch") or (backpack and backpack:FindFirstChild("Punch"))
+                if punch then if punch.Parent ~= char then hum:EquipTool(punch) end punch:Activate() end
+            end
+        end
+    end
+end)
+
+-- Dodge logic
+local function getBoss(Number)
+    local Arena = GetArena()
+    if not Arena then return nil end
+    local BossName = "Boss" .. Number
+    local Boss = Arena:FindFirstChild(BossName)
+    if Boss then return Boss end
+    for _, obj in ipairs(Arena:GetDescendants()) do if obj.Name == BossName and obj:IsA("Model") then return obj end end
+    return nil
+end
+
+local function executeFloatingDodge(boss)
+    if not AutoBoss or Dodging then return end
+    task.wait(1.5)
+    if not AutoBoss then return end
+
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local AttackCF, ImpactTime = boss:GetAttribute("BossAttackCFrame"), boss:GetAttribute("BossAttackImpactTime")
+    Dodging = true
+
+    local baseCF = (typeof(AttackCF) == "CFrame") and AttackCF or root.CFrame
+    root.CFrame = CFrame.new(baseCF.Position - (baseCF.LookVector * DodgeDistance) + Vector3.new(0, FloatHeight, 0), baseCF.Position)
+
+    local waitTime = 0.8
+    if typeof(ImpactTime) == "number" then
+        local serverTime
+        pcall(function() serverTime = Workspace:GetServerTimeNow() end)
+        if serverTime then waitTime = math.clamp(ImpactTime - serverTime, 0.2, 5) end
+    end
+
+    task.wait(waitTime + 0.4)
+
+    local bossRoot = boss:FindFirstChild("HumanoidRootPart") or boss.PrimaryPart
+    if bossRoot and root then
+        local targetCFrame = bossRoot.CFrame * CFrame.new(0, 0, AttackDistance)
+        local startCFrame = root.CFrame
+        for i = 1, 12 do
+            if not AutoBoss then break end
+            root.CFrame = startCFrame:Lerp(targetCFrame, i / 12)
+            task.wait(0.02)
+        end
+    end
+    Dodging = false
+end
+
+local function setupBossEvents(boss, number)
+    if not boss then return end
+    if Connections[number] then for _, conn in ipairs(Connections[number]) do conn:Disconnect() end end
+    Connections[number], LastSequence[number] = {}, nil
+
+    local function checkAttack()
+        if not AutoBoss then return end
+        local Sequence, Kind = boss:GetAttribute("BossAttackSequence"), boss:GetAttribute("BossAttackKind")
+        if Sequence == nil or tostring(Kind) ~= "Stomp" or LastSequence[number] == Sequence then return end
+        LastSequence[number] = Sequence
+        task.spawn(function() executeFloatingDodge(boss) end)
+    end
+
+    table.insert(Connections[number], boss:GetAttributeChangedSignal("BossAttackSequence"):Connect(checkAttack))
+    table.insert(Connections[number], boss:GetAttributeChangedSignal("BossAttackKind"):Connect(function() 
+        task.delay(0.03, function() if AutoBoss then checkAttack() end end) 
+    end))
+end
+
+local function setupAllBosses() for num = 1, 5 do local boss = getBoss(num) if boss then setupBossEvents(boss, num) end end end
+setupAllBosses()
+
+if BossRenderConn then BossRenderConn:Disconnect() end
+BossRenderConn = RunService.RenderStepped:Connect(function()
+    if not AutoBoss or Dodging then return end
+    local activeBoss = getBoss(1) or getBoss(2) or getBoss(3) or getBoss(4) or getBoss(5)
+    if activeBoss then
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local bossRoot = activeBoss:FindFirstChild("HumanoidRootPart") or activeBoss.PrimaryPart
+        if root and bossRoot then root.CFrame = bossRoot.CFrame * CFrame.new(0, 0, AttackDistance) end
+    end
+end)
+
+Player.CharacterAdded:Connect(function() task.wait(1) if AutoBoss then setupAllBosses() end end)
+
+-- ============================================
+-- ZTE LOADED MESSAGE
+-- ============================================
+print("⚡ ZTE loaded successfully!")
+print("⚡ Credits: Awesomeboybacom2000 & krys_1238")
