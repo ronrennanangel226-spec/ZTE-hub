@@ -1,0 +1,668 @@
+local Players, RunService, Workspace, SoundService =
+    game:GetService("Players"),
+    game:GetService("RunService"),
+    game:GetService("Workspace"),
+    game:GetService("SoundService")
+
+local Player = Players.LocalPlayer
+
+local Library = loadstring(game:HttpGet("https://pastebin.com/raw/29Wyuhds"))()
+
+local Window = Library:Window("ZTE HUB")
+
+local Main = Window:Tab("Auto Farm")
+local Boss = Window:Tab("Auto Boss")
+
+-- LocalScript inside StarterPlayerScripts or StarterGui
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local rebirthRemote = ReplicatedStorage:WaitForChild("rEvents"):WaitForChild("rebirthRemote")
+
+local isAutoRebirthing = false
+
+Main:Toggle("Auto Rebirth", false, function(value)
+	isAutoRebirthing = value
+	print("Auto Rebirth:", isAutoRebirthing)
+
+	if isAutoRebirthing then
+		task.spawn(function()
+			while isAutoRebirthing do
+				rebirthRemote:InvokeServer("rebirthRequest")
+				task.wait() 
+			end
+		end)
+	end
+end)
+
+local localPlayer = Players.LocalPlayer
+local muscleEvent = localPlayer:WaitForChild("muscleEvent", 10)
+local isAutoFarming = false
+
+Main:Toggle("Auto fast Rep", false, function(value)
+	isAutoFarming = value
+	print("Auto Rep:", isAutoFarming)
+
+	if isAutoFarming then
+		task.spawn(function()
+			while isAutoFarming do
+				if muscleEvent then
+					muscleEvent:FireServer("rep")
+				end
+				task.wait()
+			end
+		end)
+	end
+end)
+
+local isAutoEquipping = false
+
+Main:Toggle("Auto Equip Weight", false, function(value)
+	isAutoEquipping = value
+	print("Auto Equip Weight:", isAutoEquipping)
+
+	if isAutoEquipping then
+		task.spawn(function()
+			while isAutoEquipping do
+				local character = localPlayer.Character
+				local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+				
+				if character then
+					local humanoid = character:FindFirstChildOfClass("Humanoid")
+					local weightTool = workspace:FindFirstChild("Player") and workspace.Player:FindFirstChild("Weight")
+						or (backpack and backpack:FindFirstChild("Weight"))
+
+					if weightTool and humanoid and weightTool.Parent ~= character then
+						humanoid:EquipTool(weightTool)
+					end
+				end
+				task.wait()
+			end
+		end)
+	end
+end)
+
+local targetCFrame = CFrame.new(-8772, 28, -5672)
+local isTeleporting = false
+
+Main:Toggle("Auto muscle king", false, function(value)
+	isTeleporting = value
+	print("Teleport Toggle:", isTeleporting)
+
+	if isTeleporting then
+		task.spawn(function()
+			while isTeleporting do
+				local character = localPlayer.Character
+				if character and character:FindFirstChild("HumanoidRootPart") then
+					character:PivotTo(targetCFrame)
+				end
+				task.wait(0.1)
+			end
+		end)
+	end
+end)
+
+local UserInputService = game:GetService("UserInputService")
+local inputConnection = nil
+local lastInputTime = os.time()
+local isRunning = false
+
+Boss:Toggle("Anti AFK", false, function(value)
+	print("Toggle:", value)
+	
+	if value then
+		isRunning = true
+		lastInputTime = os.time()
+		
+		inputConnection = UserInputService.InputBegan:Connect(function()
+			lastInputTime = os.time()
+		end)
+		
+		task.spawn(function()
+			while isRunning do
+				task.wait(10)
+				local timeIdle = os.time() - lastInputTime
+				
+				if timeIdle >= 300 then
+					print("Player is idle.")
+					lastInputTime = os.time() 
+				end
+			end
+		end)
+	else
+		isRunning = false
+		if inputConnection then
+			inputConnection:Disconnect()
+			inputConnection = nil
+		end
+		print("AFK tracker disabled.")
+	end
+end)
+
+local AutoBoss, AutoPunch, AutoChest = false, false, false
+local AttackDistance, DodgeDistance, FloatHeight = 2, 180, 15
+local Dodging, Connections, LastSequence = false, {}, {}
+local BossRenderConn
+
+-- Helper function to reset physics locks when stopping
+local function unlockPhysics()
+    local char = Player.Character
+    if char then
+        for _, part in ipairs(char:GetChildren()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+    end
+end
+
+-- ============================================
+-- BOSS ALERT SOUND
+-- ============================================
+
+local alertSound = Instance.new("Sound")
+alertSound.Name = "BossSpawnAlertSound"
+alertSound.SoundId = "rbxassetid://9114223178"
+alertSound.Volume = 2.5
+alertSound.Parent = SoundService
+
+-- ============================================
+-- AUTO BOSS
+-- ============================================
+
+Boss:Toggle("AUTO BOSS", false, function(value)
+    AutoBoss = value
+    AutoPunch = value
+    AutoChest = value
+    
+    if not value then
+        unlockPhysics()
+    end
+end)
+
+-- ============================================
+-- MELEE SLIDER
+-- ============================================
+
+Boss:Slider("MELEE", 1, 15, AttackDistance, function(value)
+    AttackDistance = value
+end)
+
+-- ============================================
+-- DODGE DISTANCE SLIDER
+-- ============================================
+
+Boss:Slider("DISTANCE", 25, 300, DodgeDistance, function(value)
+    DodgeDistance = value
+end)
+
+-- ============================================
+-- SET ALL TOGGLES & AUTOMATION CONTROLLER
+-- ============================================
+
+local function SetAllToggles(targetState)
+    AutoBoss = targetState
+    AutoPunch = targetState
+    AutoChest = targetState
+    if not targetState then
+        unlockPhysics()
+    end
+end
+
+-- Controls state switching between Auto Boss and Auto Farm
+local function SetAutoFarmState(enableFarm)
+    isAutoFarming = enableFarm
+    isAutoEquipping = enableFarm
+    isAutoRebirthing = enableFarm
+
+    if enableFarm then
+        -- Trigger Auto Fast Rep Loop
+        task.spawn(function()
+            while isAutoFarming do
+                if muscleEvent then
+                    muscleEvent:FireServer("rep")
+                end
+                task.wait()
+            end
+        end)
+        -- Trigger Auto Equip Weight Loop
+        task.spawn(function()
+            while isAutoEquipping do
+                local character = localPlayer.Character
+                local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+                
+                if character then
+                    local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    local weightTool = workspace:FindFirstChild("Player") and workspace.Player:FindFirstChild("Weight")
+                        or (backpack and backpack:FindFirstChild("Weight"))
+
+                    if weightTool and humanoid and weightTool.Parent ~= character then
+                        humanoid:EquipTool(weightTool)
+                    end
+                end
+                task.wait()
+            end
+        end)
+        -- Trigger Auto Rebirth Loop
+        task.spawn(function()
+            while isAutoRebirthing do
+                rebirthRemote:InvokeServer("rebirthRequest")
+                task.wait()
+            end
+        end)
+    end
+end
+
+-- ============================================
+-- GET ARENA
+-- ============================================
+
+local function GetArena()
+    return Workspace:FindFirstChild("Events")
+        and Workspace.Events:FindFirstChild("BossArena")
+end
+
+-- ============================================
+-- GET HEALTH
+-- ============================================
+
+local function GetHealth(Model)
+    local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+
+    if Humanoid then
+        return Humanoid.Health, Humanoid.MaxHealth, Humanoid
+    end
+
+    local CurrentHP, MaxHP
+
+    for Name, Value in pairs(Model:GetAttributes()) do
+        local N = tostring(Name):lower()
+
+        if typeof(Value) == "number" then
+            if N:find("hp") or N:find("health") then
+                if N:find("max") then
+                    MaxHP = Value
+                else
+                    CurrentHP = Value
+                end
+            end
+        end
+    end
+
+    for _, Object in ipairs(Model:GetDescendants()) do
+        if Object:IsA("NumberValue") or Object:IsA("IntValue") then
+            local N = Object.Name:lower()
+
+            if N:find("hp") or N:find("health") then
+                if N:find("max") then
+                    MaxHP = Object.Value
+                else
+                    CurrentHP = Object.Value
+                end
+            end
+        end
+    end
+
+    return CurrentHP, MaxHP, nil
+end
+
+-- ============================================
+-- FIND BOSS
+-- ============================================
+
+local function FindBoss()
+    local Arena = GetArena()
+
+    if not Arena then
+        return nil
+    end
+
+    local BestBoss, BestMaxHP = nil, 0
+
+    for _, Object in ipairs(Arena:GetDescendants()) do
+        if Object:IsA("Model") and Object ~= Arena then
+            local HP, MaxHP = GetHealth(Object)
+
+            if (MaxHP or HP or 0) > BestMaxHP then
+                BestMaxHP = MaxHP or HP or 0
+                BestBoss = Object
+            end
+        end
+    end
+
+    return BestBoss
+end
+
+-- ============================================
+-- AUTO DETECT BOSS / AUTO SWITCH LOOP
+-- ============================================
+
+task.spawn(function()
+    local lastBossState = false
+
+    while task.wait(0.5) do
+        local boss = FindBoss()
+        local bossExists = false
+
+        if boss then
+            local hp = GetHealth(boss)
+            if hp and hp > 0 then
+                bossExists = true
+            end
+        end
+
+        -- State change detected
+        if bossExists ~= lastBossState then
+            lastBossState = bossExists
+
+            if bossExists then
+                -- Boss detected: Stop Auto Farm, Start Auto Boss
+                SetAutoFarmState(false)
+                SetAllToggles(true)
+                print("⚡ Boss detected! Switching to Auto Boss...")
+            else
+                -- Boss gone: Stop Auto Boss, Resume Auto Farm
+                SetAllToggles(false)
+                SetAutoFarmState(true)
+                print("⚡ Boss defeated/despawned! Resuming Auto Farm...")
+            end
+        end
+    end
+end)
+
+-- ============================================
+-- AUTO CLAIM CHEST
+-- ============================================
+
+local function TryClaimPrompt(prompt)
+    if not AutoChest then
+        return
+    end
+
+    if not prompt:IsA("ProximityPrompt") then
+        return
+    end
+
+    local act = string.lower(prompt.ActionText or "")
+    local obj = string.lower(prompt.ObjectText or "")
+
+    if act:find("claim") or obj:find("chest") then
+        pcall(function()
+            fireproximityprompt(prompt)
+        end)
+    end
+end
+
+Workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("ProximityPrompt") then
+        task.wait(0.1)
+        TryClaimPrompt(obj)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if AutoChest then
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                TryClaimPrompt(obj)
+            end
+        end
+    end
+end)
+
+-- ============================================
+-- AUTO PUNCH (FIRING & ACTIVATING)
+-- ============================================
+
+task.spawn(function()
+    while task.wait(0.05) do
+        if AutoPunch then
+            local char = Player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local backpack = Player:FindFirstChild("Backpack")
+
+            if char and hum and hum.Health > 0 then
+                local punch = char:FindFirstChild("Punch") or (backpack and backpack:FindFirstChild("Punch"))
+
+                if punch then
+                    if punch.Parent ~= char then
+                        hum:EquipTool(punch)
+                    end
+                    
+                    punch:Activate()
+
+                    if muscleEvent then
+                        muscleEvent:FireServer("punch", "RightHand")
+                        muscleEvent:FireServer("punch", "LeftHand")
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================
+-- GET BOSS
+-- ============================================
+
+local function getBoss(Number)
+    local Arena = GetArena()
+
+    if not Arena then
+        return nil
+    end
+
+    local BossName = "Boss" .. Number
+    local Boss = Arena:FindFirstChild(BossName)
+
+    if Boss then
+        return Boss
+    end
+
+    for _, obj in ipairs(Arena:GetDescendants()) do
+        if obj.Name == BossName and obj:IsA("Model") then
+            return obj
+        end
+    end
+
+    return nil
+end
+
+-- ============================================
+-- FLOATING DODGE
+-- ============================================
+
+local function executeFloatingDodge(boss)
+    if not AutoBoss or Dodging then
+        return
+    end
+
+    task.wait(1.5)
+
+    if not AutoBoss then
+        return
+    end
+
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    if not root then
+        return
+    end
+
+    local AttackCF = boss:GetAttribute("BossAttackCFrame")
+    local ImpactTime = boss:GetAttribute("BossAttackImpactTime")
+
+    Dodging = true
+
+    local baseCF = (typeof(AttackCF) == "CFrame") and AttackCF or root.CFrame
+
+    root.CFrame = CFrame.new(
+        baseCF.Position
+            - (baseCF.LookVector * DodgeDistance)
+            + Vector3.new(0, FloatHeight, 0),
+        baseCF.Position
+    )
+
+    local waitTime = 0.8
+
+    if typeof(ImpactTime) == "number" then
+        local serverTime
+        pcall(function()
+            serverTime = Workspace:GetServerTimeNow()
+        end)
+
+        if serverTime then
+            waitTime = math.clamp(ImpactTime - serverTime, 0.2, 5)
+        end
+    end
+
+    task.wait(waitTime + 0.4)
+
+    local bossRoot = boss:FindFirstChild("HumanoidRootPart") or boss.PrimaryPart
+
+    if bossRoot and root then
+        local targetCFrame = bossRoot.CFrame * CFrame.new(0, 0, AttackDistance)
+        local startCFrame = root.CFrame
+
+        for i = 1, 12 do
+            if not AutoBoss then
+                break
+            end
+
+            root.CFrame = startCFrame:Lerp(targetCFrame, i / 12)
+            task.wait(0.02)
+        end
+    end
+
+    Dodging = false
+end
+
+-- ============================================
+-- BOSS EVENTS
+-- ============================================
+
+local function setupBossEvents(boss, number)
+    if not boss then
+        return
+    end
+
+    if Connections[number] then
+        for _, conn in ipairs(Connections[number]) do
+            conn:Disconnect()
+        end
+    end
+
+    Connections[number] = {}
+    LastSequence[number] = nil
+
+    local function checkAttack()
+        if not AutoBoss then
+            return
+        end
+
+        local Sequence = boss:GetAttribute("BossAttackSequence")
+        local Kind = boss:GetAttribute("BossAttackKind")
+
+        if Sequence == nil or tostring(Kind) ~= "Stomp" or LastSequence[number] == Sequence then
+            return
+        end
+
+        LastSequence[number] = Sequence
+
+        task.spawn(function()
+            executeFloatingDodge(boss)
+        end)
+    end
+
+    table.insert(
+        Connections[number],
+        boss:GetAttributeChangedSignal("BossAttackSequence"):Connect(checkAttack)
+    )
+
+    table.insert(
+        Connections[number],
+        boss:GetAttributeChangedSignal("BossAttackKind"):Connect(function()
+            task.delay(0.03, function()
+                if AutoBoss then
+                    checkAttack()
+                end
+            end)
+        end)
+    )
+end
+
+-- ============================================
+-- SETUP ALL BOSSES
+-- ============================================
+
+local function setupAllBosses()
+    for num = 1, 5 do
+        local boss = getBoss(num)
+        if boss then
+            setupBossEvents(boss, num)
+        end
+    end
+end
+
+setupAllBosses()
+
+-- ============================================
+-- BOSS FOLLOW / PSEUDO-ANCHORING LOCK
+-- ============================================
+
+if BossRenderConn then
+    BossRenderConn:Disconnect()
+end
+
+BossRenderConn = RunService.RenderStepped:Connect(function()
+    if not AutoBoss or Dodging then
+        return
+    end
+
+    local activeBoss =
+        getBoss(1)
+        or getBoss(2)
+        or getBoss(3)
+        or getBoss(4)
+        or getBoss(5)
+
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    if activeBoss and root then
+        local bossRoot = activeBoss:FindFirstChild("HumanoidRootPart") or activeBoss.PrimaryPart
+
+        if bossRoot then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            for _, part in ipairs(char:GetChildren()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+
+            root.CFrame = bossRoot.CFrame * CFrame.new(0, 0, AttackDistance)
+        end
+    end
+end)
+
+-- ============================================
+-- CHARACTER RESPAWN
+-- ============================================
+
+Player.CharacterAdded:Connect(function()
+    task.wait(1)
+    if AutoBoss then
+        setupAllBosses()
+    end
+end)
+
+-- ============================================
+-- LOADED
+-- ============================================
+
+print("⚡ ZTE loaded successfully!")
+print("⚡ Auto Boss & Auto Farm toggler activated!")
